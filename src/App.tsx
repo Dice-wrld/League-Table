@@ -627,7 +627,7 @@ function App() {
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex gap-1">
-                          {team.form.length > 0 ? team.form.map((result, i) => (
+                          {team.form.length > 0 ? [...team.form].reverse().map((result, i) => (
                             <div
                               key={i}
                               className={cn(
@@ -711,7 +711,7 @@ function App() {
                   </div>
                   
                   <div className="flex gap-1">
-                    {team.form.length > 0 ? team.form.map((result, i) => (
+                    {team.form.length > 0 ? [...team.form].reverse().map((result, i) => (
                       <div
                         key={i}
                         className={cn(
