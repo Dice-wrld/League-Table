@@ -311,7 +311,7 @@ function App() {
             type="text"
             value={activeTournament?.tournamentName ?? ''}
             onChange={(e) => onUpdateTournamentName(e.target.value)}
-            className="text-5xl font-bold text-white mb-2 tracking-tight bg-transparent border-b-2 border-transparent hover:border-white/30 focus:border-white/50 outline-none text-center transition-colors px-4"
+            className="w-full max-w-2xl mx-auto text-3xl sm:text-4xl md:text-5xl font-bold text-white mb-2 tracking-tight bg-transparent border-b-2 border-transparent hover:border-white/30 focus:border-white/50 outline-none text-center transition-colors px-4"
             placeholder="Tournament Name"
           />
           <p className="text-purple-200 text-lg">League Standings</p>

@@ -27,6 +27,8 @@ export interface TournamentData {
   tournamentName: string;
   teams: Team[];
   matches: MatchResult[];
+  tournamentLength: number | null;
+  celebrationShown: boolean;
 }
 
 export interface TournamentCollection {
@@ -68,6 +70,8 @@ export const createTournamentData = (name = "Gaming Tournament", id = Date.now()
   tournamentName: name,
   teams: createInitialTeams(),
   matches: [],
+  tournamentLength: null,
+  celebrationShown: false,
 });
 
 export const createDefaultTournament = (): TournamentData => createTournamentData();
@@ -103,6 +107,11 @@ const normalizeTournament = (tournament: Partial<TournamentData>): TournamentDat
       : createDefaultTournament().tournamentName,
   teams: Array.isArray(tournament.teams) && tournament.teams.length > 0 ? tournament.teams.map(normalizeTeam) : createInitialTeams(),
   matches: Array.isArray(tournament.matches) ? tournament.matches.filter(isMatchResult) : [],
+  tournamentLength:
+    typeof tournament.tournamentLength === "number" && tournament.tournamentLength > 0
+      ? Math.floor(tournament.tournamentLength)
+      : null,
+  celebrationShown: tournament.celebrationShown === true,
 });
 
 export const saveTournamentCollection = (collection: TournamentCollection) => {
@@ -295,6 +304,11 @@ export const importTournamentData = (json: string, id = Date.now()): TournamentD
         : createDefaultTournament().tournamentName,
     teams: Array.isArray(parsed.teams) && parsed.teams.length > 0 ? parsed.teams.map(normalizeTeam) : createInitialTeams(),
     matches: Array.isArray(parsed.matches) ? parsed.matches.filter(isMatchResult) : [],
+    tournamentLength:
+      typeof parsed.tournamentLength === "number" && parsed.tournamentLength > 0
+        ? Math.floor(parsed.tournamentLength)
+        : null,
+    celebrationShown: false,
   };
 };
 
