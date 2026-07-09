@@ -80,14 +80,15 @@ function CelebrationOverlay({
         <p className="text-purple-300 text-base sm:text-lg">Here are your champions</p>
       </div>
 
-      {/* Podium */}
+      {/* Podium — visual order: 2nd | 1st | 3rd */}
       <div className="flex items-end justify-center gap-3 mt-6 mb-8 w-full max-w-sm">
         {podiumOrder.map((idx) => {
           const player = podium[idx];
           if (!player) return null;
-          const heights = ['h-28', 'h-36', 'h-20'];
-          const colors = ['bg-gray-500', 'bg-yellow-400', 'bg-amber-600'];
-          const textColors = ['text-gray-200', 'text-yellow-900', 'text-amber-100'];
+          // Indexed by rank (0=1st, 1=2nd, 2=3rd)
+          const heights = ['h-36', 'h-28', 'h-20'];      // 1st tallest
+          const colors  = ['bg-yellow-400', 'bg-gray-400', 'bg-amber-600']; // gold, silver, bronze
+          const textColors = ['text-yellow-900', 'text-gray-900', 'text-amber-100'];
           return (
             <div key={idx} className="flex flex-col items-center flex-1">
               <div className="text-2xl mb-1">{medals[idx]}</div>
@@ -133,9 +134,11 @@ function CelebrationOverlay({
 function QueuePanel({
   tournament,
   onResult,
+  onArrange,
 }: {
   tournament: ReturnType<typeof loadTournamentCollection>['tournaments'][number];
   onResult: (homeScore: number, awayScore: number) => void;
+  onArrange: () => void;
 }) {
   const [homeScore, setHomeScore] = useState('');
   const [awayScore, setAwayScore] = useState('');
@@ -164,9 +167,17 @@ function QueuePanel({
 
   return (
     <div className="bg-slate-800/60 rounded-xl border border-slate-700 p-4 mb-6">
-      <h3 className="text-purple-300 text-xs font-bold uppercase tracking-widest mb-4 text-center">
-        🎮 On Court Now
-      </h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-purple-300 text-xs font-bold uppercase tracking-widest">
+          🎮 On Court Now
+        </h3>
+        <button
+          onClick={onArrange}
+          className="text-xs text-slate-400 hover:text-white transition-colors border border-slate-600 hover:border-slate-400 px-2 py-1 rounded-lg"
+        >
+          🔀 Arrange Players
+        </button>
+      </div>
 
       {/* Score entry */}
       <div className="flex items-center gap-2 justify-center mb-4">
@@ -246,6 +257,8 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showImportExport, setShowImportExport] = useState(false);
   const [showLengthSetter, setShowLengthSetter] = useState(false);
+  const [showArrangeQueue, setShowArrangeQueue] = useState(false);
+  const [queueDraft, setQueueDraft] = useState<number[]>([]);
   const [pendingLength, setPendingLength] = useState('');
   const [homeTeamId, setHomeTeamId] = useState<number | null>(null);
   const [awayTeamId, setAwayTeamId] = useState<number | null>(null);
@@ -306,6 +319,31 @@ export default function App() {
 
   const onSetMode = (mode: 'league' | 'queue') => {
     updateCollection((t) => setTournamentMode(t!, mode));
+  };
+
+  const onOpenArrangeQueue = () => {
+    // Full ordered list: on-court first, then queue
+    const full = [...activeTournament.onCourt, ...activeTournament.queueOrder];
+    setQueueDraft(full);
+    setShowArrangeQueue(true);
+  };
+
+  const onMoveQueueItem = (from: number, to: number) => {
+    setQueueDraft((prev) => {
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  };
+
+  const onSaveQueueOrder = () => {
+    updateCollection((t) => ({
+      ...t!,
+      onCourt: [queueDraft[0], queueDraft[1]] as [number, number],
+      queueOrder: queueDraft.slice(2),
+    }));
+    setShowArrangeQueue(false);
   };
 
   const onSaveLength = () => {
@@ -582,7 +620,7 @@ export default function App() {
 
         {/* ── Queue panel (Winner Stays On mode) ───────────────────── */}
         {activeTournament.mode === 'queue' && !isComplete && (
-          <QueuePanel tournament={activeTournament} onResult={onQueueResult} />
+          <QueuePanel tournament={activeTournament} onResult={onQueueResult} onArrange={onOpenArrangeQueue} />
         )}
 
         {/* ── Legend ───────────────────────────────────────────────── */}
@@ -902,6 +940,78 @@ export default function App() {
             <div className="flex gap-2">
               <button onClick={() => setShowImportExport(false)} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl transition-colors">Cancel</button>
               <button onClick={onImport} disabled={!importText.trim()} className="flex-1 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white font-bold rounded-xl transition-colors">Import</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Arrange Queue ────────────────────────────────────────── */}
+      {showArrangeQueue && (
+        <div className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4">
+          <div className="bg-slate-800 rounded-2xl border border-slate-600 p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold text-white mb-1">🔀 Arrange Players</h2>
+            <p className="text-slate-400 text-xs mb-4">
+              The top 2 start on court. Everyone below waits in queue order. Use ↑ ↓ to reorder.
+            </p>
+
+            <div className="space-y-2 mb-6">
+              {queueDraft.map((id, i) => {
+                const team = activeTournament.teams.find((t) => t.id === id);
+                if (!team) return null;
+                const isOnCourt = i < 2;
+                return (
+                  <div
+                    key={id}
+                    className={cn(
+                      'flex items-center gap-3 rounded-xl px-3 py-2.5 border',
+                      isOnCourt
+                        ? 'bg-purple-900/40 border-purple-500/50'
+                        : 'bg-slate-700/50 border-slate-600/50'
+                    )}
+                  >
+                    <span className="text-slate-400 text-xs w-5 text-center font-mono">
+                      {isOnCourt ? '🎮' : i + 1}
+                    </span>
+                    <span className="flex-1 text-white text-sm font-medium">{team.name}</span>
+                    {isOnCourt && (
+                      <span className="text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded font-bold">
+                        {i === 0 ? 'P1' : 'P2'}
+                      </span>
+                    )}
+                    <div className="flex flex-col gap-0.5">
+                      <button
+                        onClick={() => onMoveQueueItem(i, i - 1)}
+                        disabled={i === 0}
+                        className="text-slate-400 hover:text-white disabled:opacity-20 text-xs leading-none px-1"
+                      >
+                        ▲
+                      </button>
+                      <button
+                        onClick={() => onMoveQueueItem(i, i + 1)}
+                        disabled={i === queueDraft.length - 1}
+                        className="text-slate-400 hover:text-white disabled:opacity-20 text-xs leading-none px-1"
+                      >
+                        ▼
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowArrangeQueue(false)}
+                className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onSaveQueueOrder}
+                className="flex-1 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors"
+              >
+                Confirm Order
+              </button>
             </div>
           </div>
         </div>
