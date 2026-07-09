@@ -5,150 +5,365 @@ import {
   addNewTeam,
   addTournament,
   importTournamentData,
+  isTournamentComplete,
   loadTournamentCollection,
+  markCelebrationShown,
+  recordQueueResult,
   removeTournament,
   removeTeam,
   resetTournament,
   saveTournamentCollection,
   setCurrentTournament,
+  setTournamentLength,
+  setTournamentMode,
   sortTeams,
   updateTournamentInCollection,
   updateTeamName,
   type TournamentCollection,
 } from './lib/tournament';
 
-function App() {
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+const getFormColor = (result: 'W' | 'D' | 'L') => {
+  if (result === 'W') return 'bg-green-500';
+  if (result === 'D') return 'bg-gray-500';
+  return 'bg-red-500';
+};
+
+const getZoneClass = (position: number, total: number) => {
+  if (position === 1) return 'border-l-4 border-yellow-400';
+  if (position === 2) return 'border-l-4 border-gray-400';
+  if (position === 3) return 'border-l-4 border-amber-600';
+  if (position === total) return 'border-l-4 border-red-600';
+  return 'border-l-4 border-transparent';
+};
+
+const getPositionChange = (current: number, previous?: number) => {
+  if (!previous || previous === current) return null;
+  return previous > current ? 'up' : 'down';
+};
+
+// ─── Celebration overlay ─────────────────────────────────────────────────────
+
+function CelebrationOverlay({
+  podium,
+  onDismiss,
+}: {
+  podium: { name: string; points: number; position: number }[];
+  onDismiss: () => void;
+}) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setVisible(true), 50);
+    return () => clearTimeout(t);
+  }, []);
+
+  const medals = ['🥇', '🥈', '🥉'];
+  const podiumOrder = [1, 0, 2]; // visual order: 2nd | 1st | 3rd
+
+  return (
+    <div
+      className={cn(
+        'fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm transition-opacity duration-500 px-4',
+        visible ? 'opacity-100' : 'opacity-0'
+      )}
+    >
+      {/* Trophy */}
+      <div className="text-center mb-2">
+        <div
+          className="text-8xl mb-2 inline-block"
+          style={{ animation: 'trophyBounce 0.8s ease-in-out infinite alternate' }}
+        >
+          🏆
+        </div>
+        <h1 className="text-3xl sm:text-4xl font-bold text-white mb-1">Tournament Over!</h1>
+        <p className="text-purple-300 text-base sm:text-lg">Here are your champions</p>
+      </div>
+
+      {/* Podium */}
+      <div className="flex items-end justify-center gap-3 mt-6 mb-8 w-full max-w-sm">
+        {podiumOrder.map((idx) => {
+          const player = podium[idx];
+          if (!player) return null;
+          const heights = ['h-28', 'h-36', 'h-20'];
+          const colors = ['bg-gray-500', 'bg-yellow-400', 'bg-amber-600'];
+          const textColors = ['text-gray-200', 'text-yellow-900', 'text-amber-100'];
+          return (
+            <div key={idx} className="flex flex-col items-center flex-1">
+              <div className="text-2xl mb-1">{medals[idx]}</div>
+              <div className="text-white text-xs font-bold text-center mb-1 px-1 leading-tight">
+                {player.name}
+              </div>
+              <div className="text-purple-300 text-xs mb-2">{player.points} pts</div>
+              <div
+                className={cn(
+                  'w-full rounded-t-lg flex items-center justify-center font-black text-xl',
+                  heights[idx],
+                  colors[idx],
+                  textColors[idx]
+                )}
+              >
+                {idx + 1}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Dismiss */}
+      <button
+        onClick={onDismiss}
+        className="mt-2 px-8 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors text-base"
+      >
+        🎮 Keep Playing
+      </button>
+
+      <style>{`
+        @keyframes trophyBounce {
+          from { transform: translateY(0) rotate(-5deg); }
+          to   { transform: translateY(-12px) rotate(5deg); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ─── Queue mode panel ─────────────────────────────────────────────────────────
+
+function QueuePanel({
+  tournament,
+  onResult,
+}: {
+  tournament: ReturnType<typeof loadTournamentCollection>['tournaments'][number];
+  onResult: (homeScore: number, awayScore: number) => void;
+}) {
+  const [homeScore, setHomeScore] = useState('');
+  const [awayScore, setAwayScore] = useState('');
+  const [error, setError] = useState('');
+
+  const homeTeam = tournament.teams.find((t) => t.id === tournament.onCourt[0]);
+  const awayTeam = tournament.teams.find((t) => t.id === tournament.onCourt[1]);
+  const queue = tournament.queueOrder
+    .map((id) => tournament.teams.find((t) => t.id === id))
+    .filter(Boolean);
+
+  const handleSubmit = () => {
+    const h = parseInt(homeScore);
+    const a = parseInt(awayScore);
+    if (isNaN(h) || isNaN(a) || h < 0 || a < 0) {
+      setError('Enter valid scores (0 or above)');
+      return;
+    }
+    setError('');
+    setHomeScore('');
+    setAwayScore('');
+    onResult(h, a);
+  };
+
+  if (!homeTeam || !awayTeam) return null;
+
+  return (
+    <div className="bg-slate-800/60 rounded-xl border border-slate-700 p-4 mb-6">
+      <h3 className="text-purple-300 text-xs font-bold uppercase tracking-widest mb-4 text-center">
+        🎮 On Court Now
+      </h3>
+
+      {/* Score entry */}
+      <div className="flex items-center gap-2 justify-center mb-4">
+        {/* Home */}
+        <div className="flex-1 text-center">
+          <div className="text-white font-bold text-sm mb-2 truncate px-1">{homeTeam.name}</div>
+          <input
+            type="number"
+            min="0"
+            value={homeScore}
+            onChange={(e) => setHomeScore(e.target.value)}
+            placeholder="0"
+            className="w-full bg-slate-700 border border-slate-600 text-white text-center text-2xl font-bold rounded-lg py-3 outline-none focus:border-purple-400"
+          />
+        </div>
+
+        <div className="text-slate-400 font-bold text-xl flex-shrink-0">VS</div>
+
+        {/* Away */}
+        <div className="flex-1 text-center">
+          <div className="text-white font-bold text-sm mb-2 truncate px-1">{awayTeam.name}</div>
+          <input
+            type="number"
+            min="0"
+            value={awayScore}
+            onChange={(e) => setAwayScore(e.target.value)}
+            placeholder="0"
+            className="w-full bg-slate-700 border border-slate-600 text-white text-center text-2xl font-bold rounded-lg py-3 outline-none focus:border-purple-400"
+          />
+        </div>
+      </div>
+
+      {error && <p className="text-red-400 text-xs text-center mb-3">{error}</p>}
+
+      <button
+        onClick={handleSubmit}
+        className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl transition-colors"
+      >
+        ✅ Submit Result
+      </button>
+
+      {/* Queue */}
+      {queue.length > 0 && (
+        <div className="mt-4">
+          <p className="text-purple-300 text-xs font-bold uppercase tracking-widest mb-2 text-center">
+            🪑 Waiting Queue
+          </p>
+          <div className="flex flex-wrap gap-2 justify-center">
+            {queue.map((team, i) => (
+              <div
+                key={team!.id}
+                className="flex items-center gap-1.5 bg-slate-700/60 px-3 py-1.5 rounded-lg border border-slate-600"
+              >
+                <span className="text-slate-400 text-xs">#{i + 1}</span>
+                <span className="text-white text-sm font-medium">{team!.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-slate-400 bg-slate-900/40 rounded-lg p-3">
+        <div>🏆 Win → stays on</div>
+        <div>👋 Lose → back of queue</div>
+        <div className="col-span-2">🤝 Draw → both go to back, next two step up</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main App ────────────────────────────────────────────────────────────────
+
+export default function App() {
   const [collection, setCollection] = useState<TournamentCollection>(() => loadTournamentCollection());
-  const [showAnimation, setShowAnimation] = useState(false);
   const [showAddMatch, setShowAddMatch] = useState(false);
   const [showEditTeams, setShowEditTeams] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showImportExport, setShowImportExport] = useState(false);
-  const [team1Id, setTeam1Id] = useState<number>(1);
-  const [team2Id, setTeam2Id] = useState<number>(2);
-  const [team1Score, setTeam1Score] = useState<string>('');
-  const [team2Score, setTeam2Score] = useState<string>('');
+  const [showLengthSetter, setShowLengthSetter] = useState(false);
+  const [pendingLength, setPendingLength] = useState('');
+  const [homeTeamId, setHomeTeamId] = useState<number | null>(null);
+  const [awayTeamId, setAwayTeamId] = useState<number | null>(null);
+  const [homeScore, setHomeScore] = useState('');
+  const [awayScore, setAwayScore] = useState('');
   const [importText, setImportText] = useState('');
+  const [newTeamNames, setNewTeamNames] = useState<Record<number, string>>({});
 
-  useEffect(() => {
-    setTimeout(() => setShowAnimation(true), 100);
-  }, []);
+  const activeTournament = useMemo(
+    () => collection.tournaments.find((t) => t.id === collection.currentId) ?? collection.tournaments[0],
+    [collection]
+  );
+
+  const sortedTeams = useMemo(() => sortTeams(activeTournament?.teams ?? []), [activeTournament]);
+
+  const isComplete = useMemo(
+    () => !!activeTournament && isTournamentComplete(activeTournament),
+    [activeTournament]
+  );
+
+  const showCelebration = isComplete && !!activeTournament && !activeTournament.celebrationShown;
 
   useEffect(() => {
     saveTournamentCollection(collection);
   }, [collection]);
 
   useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/service-worker.js').catch(() => {
-        // ignore registration failures in unsupported environments
-      });
+    if (activeTournament) {
+      setNewTeamNames(Object.fromEntries(activeTournament.teams.map((t) => [t.id, t.name])));
     }
-  }, []);
-
-  const activeTournament = collection.tournaments.find((t) => t.id === collection.currentId) ?? collection.tournaments[0];
-
-  useEffect(() => {
-    if (!activeTournament) {
-      return;
-    }
-
-    setTeam1Id(activeTournament.teams[0]?.id ?? 1);
-    setTeam2Id(activeTournament.teams[1]?.id ?? 2);
   }, [activeTournament]);
 
-  const teams = activeTournament?.teams ?? [];
-  const matches = activeTournament?.matches ?? [];
+  const updateCollection = (updater: (t: typeof activeTournament) => typeof activeTournament) => {
+    if (!activeTournament) return;
+    const updated = updater(activeTournament);
+    if (!updated) return;
+    setCollection((prev) => updateTournamentInCollection(prev, updated));
+  };
 
-  const addResult = () => {
-    const score1 = Number.parseInt(team1Score, 10);
-    const score2 = Number.parseInt(team2Score, 10);
+  // ── Handlers ────────────────────────────────────────────────────────────────
 
-    if (Number.isNaN(score1) || Number.isNaN(score2) || score1 < 0 || score2 < 0) {
-      alert('Please enter valid scores');
-      return;
-    }
+  const onUpdateTournamentName = (name: string) => updateCollection((t) => ({ ...t!, tournamentName: name }));
 
-    if (team1Id === team2Id) {
-      alert('Please select different teams');
-      return;
-    }
-
-    if (!activeTournament) {
-      return;
-    }
-
-    setShowAnimation(false);
-    const updatedTournament = addMatchResult(activeTournament, team1Id, team2Id, score1, score2);
-    setCollection((current) => updateTournamentInCollection(current, updatedTournament));
-    setTeam1Score('');
-    setTeam2Score('');
+  const onAddMatch = () => {
+    if (homeTeamId === null || awayTeamId === null) return;
+    const h = parseInt(homeScore);
+    const a = parseInt(awayScore);
+    if (isNaN(h) || isNaN(a)) return;
+    updateCollection((t) => addMatchResult(t!, homeTeamId, awayTeamId, h, a));
+    setHomeScore('');
+    setAwayScore('');
     setShowAddMatch(false);
+  };
 
-    setTimeout(() => setShowAnimation(true), 100);
+  const onQueueResult = (h: number, a: number) => {
+    updateCollection((t) => recordQueueResult(t!, h, a));
+  };
+
+  const onSetMode = (mode: 'league' | 'queue') => {
+    updateCollection((t) => setTournamentMode(t!, mode));
+  };
+
+  const onSaveLength = () => {
+    const n = parseInt(pendingLength);
+    updateCollection((t) => setTournamentLength(t!, isNaN(n) || n <= 0 ? null : n));
+    setShowLengthSetter(false);
+    setPendingLength('');
+  };
+
+  const onDismissCelebration = () => {
+    updateCollection((t) => markCelebrationShown(t!));
   };
 
   const onResetTournament = () => {
-    if (!activeTournament) {
-      return;
-    }
-
-    if (confirm('Are you sure you want to reset all stats? This cannot be undone.')) {
-      const updatedTournament = resetTournament(activeTournament);
-      setCollection((current) => updateTournamentInCollection(current, updatedTournament));
-    }
+    if (!confirm('Reset all match data? Team names will be kept.')) return;
+    updateCollection((t) => resetTournament(t!));
   };
 
-  const onUpdateTournamentName = (newName: string) => {
-    if (!activeTournament) {
-      return;
-    }
-
-    const updatedTournament = { ...activeTournament, tournamentName: newName };
-    setCollection((current) => updateTournamentInCollection(current, updatedTournament));
-  };
-
-  const onUpdateTeamName = (id: number, newName: string) => {
-    if (!activeTournament) {
-      return;
-    }
-
-    const updatedTournament = updateTeamName(activeTournament, id, newName);
-    setCollection((current) => updateTournamentInCollection(current, updatedTournament));
-  };
-
-  const onAddNewTeam = () => {
-    if (!activeTournament) {
-      return;
-    }
-
-    const updatedTournament = addNewTeam(activeTournament);
-    setCollection((current) => updateTournamentInCollection(current, updatedTournament));
-  };
+  const onAddTeam = () => updateCollection((t) => addNewTeam(t!));
 
   const onRemoveTeam = (id: number) => {
-    if (!activeTournament) {
+    if (activeTournament && activeTournament.teams.length <= 2) {
+      alert('Need at least 2 teams');
       return;
     }
-
-    if (teams.length <= 2) {
-      alert('You need at least 2 teams!');
-      return;
-    }
-
-    if (confirm('Are you sure you want to remove this team?')) {
-      const updatedTournament = removeTeam(activeTournament, id);
-      setCollection((current) => updateTournamentInCollection(current, updatedTournament));
-    }
+    if (!confirm('Remove this team?')) return;
+    updateCollection((t) => removeTeam(t!, id));
   };
 
-  const onImportTournament = () => {
+  const onSaveTeamNames = () => {
+    let updated = activeTournament!;
+    Object.entries(newTeamNames).forEach(([idStr, name]) => {
+      if (name.trim()) updated = updateTeamName(updated, parseInt(idStr), name.trim());
+    });
+    setCollection((prev) => updateTournamentInCollection(prev, updated));
+    setShowEditTeams(false);
+  };
+
+  const onAddTournament = () => {
+    const name = prompt('Tournament name:');
+    if (!name?.trim()) return;
+    setCollection((prev) => addTournament(prev, name.trim()));
+  };
+
+  const onRemoveTournament = () => {
+    if (collection.tournaments.length <= 1) { alert('Need at least one tournament'); return; }
+    if (!confirm('Delete this tournament?')) return;
+    setCollection((prev) => removeTournament(prev, collection.currentId));
+  };
+
+  const onImport = () => {
     try {
       const imported = importTournamentData(importText);
-      setCollection((current) => {
-        const updatedCollection = addTournament(current, imported.tournamentName);
-        return updateTournamentInCollection(updatedCollection, { ...imported, id: updatedCollection.currentId });
-      });
+      setCollection((prev) => ({
+        ...prev,
+        currentId: imported.id,
+        tournaments: [...prev.tournaments, imported],
+      }));
       setImportText('');
       setShowImportExport(false);
     } catch {
@@ -156,495 +371,304 @@ function App() {
     }
   };
 
-  const onExportTournament = () => {
-    if (!activeTournament) {
-      return;
-    }
-
+  const onExport = () => {
+    if (!activeTournament) return;
     const data = JSON.stringify(activeTournament, null, 2);
-    setImportText(data);
-    setShowImportExport(true);
-  };
-
-  const copyImportText = async () => {
-    if (!importText) {
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(importText);
-      alert('Tournament JSON copied to clipboard');
-    } catch {
-      alert('Copy failed. Please copy manually.');
-    }
-  };
-
-  const downloadTournament = () => {
-    if (!importText) {
-      return;
-    }
-
-    const filename = `${activeTournament?.tournamentName.replace(/[^a-zA-Z0-9-_]/g, '_') ?? 'tournament'}.json`;
-    const blob = new Blob([importText], { type: 'application/json;charset=utf-8' });
+    const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-
     link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
+    link.download = `${activeTournament.tournamentName.replace(/\s+/g, '-')}.json`;
     link.click();
-    document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
 
-  const shareTournament = async () => {
-    if (!activeTournament) {
-      return;
-    }
+  const [shareToast, setShareToast] = useState('');
 
+  const showToast = (msg: string) => {
+    setShareToast(msg);
+    setTimeout(() => setShareToast(''), 2500);
+  };
+
+  const onShare = async () => {
+    if (!activeTournament) return;
     const data = JSON.stringify(activeTournament, null, 2);
-    const filename = `${activeTournament.tournamentName.replace(/[^a-zA-Z0-9-_]/g, '_') ?? 'tournament'}.json`;
-    const file = new File([data], `${filename}.json`, { type: 'application/json' });
+    const filename = `${activeTournament.tournamentName.replace(/\s+/g, '-')}.json`;
 
+    // 1. Try native file share (works on Android Chrome over HTTPS)
     try {
+      const file = new File([data], filename, { type: 'application/json' });
       if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: activeTournament.tournamentName,
-          text: 'Tournament data export',
-        });
+        await navigator.share({ files: [file], title: activeTournament.tournamentName });
         return;
       }
     } catch {
-      // continue to text share fallback
+      // share was cancelled or failed — fall through
     }
 
+    // 2. Try sharing just the site URL + standings summary as text
+    const summary = sortedTeams
+      .slice(0, 3)
+      .map((t, i) => `${i + 1}. ${t.name} — ${t.points} pts`)
+      .join('\n');
+    const shareText = `🏆 ${activeTournament.tournamentName}\n\n${summary}\n\ndice-league.netlify.app`;
     try {
-      await navigator.share({
-        title: activeTournament.tournamentName,
-        text: data,
-      });
+      if (navigator.share) {
+        await navigator.share({ title: activeTournament.tournamentName, text: shareText });
+        return;
+      }
+    } catch {
+      // cancelled or not supported
+    }
+
+    // 3. Copy JSON to clipboard
+    try {
+      await navigator.clipboard.writeText(data);
+      showToast('✅ Copied to clipboard!');
       return;
     } catch {
-      alert('Sharing is not supported on this device. Please use Copy JSON or Download JSON instead.');
-    }
-  };
-
-  const getPositionChange = (currentPosition: number, previousPosition?: number) => {
-    if (!previousPosition) return null;
-    const change = previousPosition - currentPosition;
-    if (change > 0) return { direction: 'up', value: change };
-    if (change < 0) return { direction: 'down', value: Math.abs(change) };
-    return { direction: 'same', value: 0 };
-  };
-
-  const getZoneClass = (position: number, totalTeams: number) => {
-    if (position === 1) return 'border-l-4 border-l-yellow-400 bg-yellow-500/10';
-    if (position === 2) return 'border-l-4 border-l-gray-300 bg-gray-300/10';
-    if (position === 3) return 'border-l-4 border-l-orange-600 bg-orange-600/10';
-    if (position === totalTeams) return 'border-l-4 border-l-red-500 bg-red-500/10';
-    return 'border-l-4 border-l-slate-600';
-  };
-
-  const getFormColor = (result: 'W' | 'D' | 'L') => {
-    switch (result) {
-      case 'W': return 'bg-green-500';
-      case 'D': return 'bg-gray-400';
-      case 'L': return 'bg-red-500';
-    }
-  };
-
-  const sortedTeams = useMemo(() => sortTeams(teams), [teams]);
-  const recentMatches = useMemo(() => matches.slice(0, 6), [matches]);
-
-  const onAddNewTournament = () => {
-    setCollection((current) => addTournament(current));
-  };
-
-  const onDeleteTournament = () => {
-    if (collection.tournaments.length <= 1) {
-      alert('You must keep at least one tournament.');
-      return;
+      // clipboard blocked
     }
 
-    if (confirm('Delete this tournament?')) {
-      setCollection((current) => removeTournament(current, current.currentId));
-    }
+    // 4. Last resort: download file
+    onExport();
+    showToast('⬇️ Downloaded as file');
   };
 
-  const onSelectTournament = (id: number) => {
-    setCollection((current) => setCurrentTournament(current, id));
-  };
+  if (!activeTournament) return null;
+
+  const podiumData = sortedTeams.slice(0, 3).map((t, i) => ({
+    name: t.name,
+    points: t.points,
+    position: i + 1,
+  }));
+
+  const matchProgress =
+    activeTournament.tournamentLength !== null
+      ? `${activeTournament.matches.length} / ${activeTournament.tournamentLength} matches`
+      : null;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 py-8 px-4">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="flex flex-wrap justify-center gap-3 mb-4">
-            <select
-              value={activeTournament?.id ?? ''}
-              onChange={(e) => onSelectTournament(Number(e.target.value))}
-              className="bg-slate-800 text-white rounded-lg px-4 py-3 shadow-lg border border-slate-700"
-            >
-              {collection.tournaments.map((tournament) => (
-                <option key={tournament.id} value={tournament.id}>
-                  {tournament.tournamentName}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={onAddNewTournament}
-              className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors shadow-lg"
-            >
-              + New Tournament
-            </button>
-            <button
-              onClick={onDeleteTournament}
-              className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors shadow-lg"
-            >
-              Delete Tournament
-            </button>
-          </div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white">
+      {/* Celebration overlay */}
+      {showCelebration && (
+        <CelebrationOverlay podium={podiumData} onDismiss={onDismissCelebration} />
+      )}
 
+      <div className="max-w-4xl mx-auto px-3 sm:px-6 py-6">
+
+        {/* ── Tournament picker + controls ─────────────────────────── */}
+        <div className="flex flex-wrap items-center justify-center gap-2 mb-6">
+          <select
+            value={collection.currentId}
+            onChange={(e) => setCollection((prev) => setCurrentTournament(prev, parseInt(e.target.value)))}
+            className="bg-slate-800 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-400"
+          >
+            {collection.tournaments.map((t) => (
+              <option key={t.id} value={t.id}>{t.tournamentName}</option>
+            ))}
+          </select>
+          <button
+            onClick={onAddTournament}
+            className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            + New Tournament
+          </button>
+          <button
+            onClick={onRemoveTournament}
+            className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            Delete Tournament
+          </button>
+        </div>
+
+        {/* ── Header ───────────────────────────────────────────────── */}
+        <div className="text-center mb-6">
           <input
             type="text"
-            value={activeTournament?.tournamentName ?? ''}
+            value={activeTournament.tournamentName}
             onChange={(e) => onUpdateTournamentName(e.target.value)}
             className="w-full max-w-2xl mx-auto text-3xl sm:text-4xl md:text-5xl font-bold text-white mb-2 tracking-tight bg-transparent border-b-2 border-transparent hover:border-white/30 focus:border-white/50 outline-none text-center transition-colors px-4"
             placeholder="Tournament Name"
           />
-          <p className="text-purple-200 text-lg">League Standings</p>
-          
-          <div className="flex flex-wrap gap-3 justify-center mt-6">
+          <p className="text-purple-300 text-sm">League Standings</p>
+
+          {/* Mode toggle */}
+          <div className="flex items-center justify-center gap-2 mt-3">
+            <button
+              onClick={() => onSetMode('league')}
+              className={cn(
+                'px-4 py-1.5 rounded-full text-sm font-medium transition-colors border',
+                activeTournament.mode === 'league'
+                  ? 'bg-purple-600 border-purple-400 text-white'
+                  : 'bg-transparent border-slate-600 text-slate-400 hover:text-white'
+              )}
+            >
+              📊 League
+            </button>
+            <button
+              onClick={() => onSetMode('queue')}
+              className={cn(
+                'px-4 py-1.5 rounded-full text-sm font-medium transition-colors border',
+                activeTournament.mode === 'queue'
+                  ? 'bg-purple-600 border-purple-400 text-white'
+                  : 'bg-transparent border-slate-600 text-slate-400 hover:text-white'
+              )}
+            >
+              🎮 Winner Stays On
+            </button>
+          </div>
+
+          {/* Tournament length */}
+          <div className="flex items-center justify-center gap-2 mt-3">
+            {matchProgress && (
+              <span className="text-purple-300 text-xs font-mono bg-purple-900/40 px-3 py-1 rounded-full">
+                {matchProgress}
+              </span>
+            )}
+            <button
+              onClick={() => { setPendingLength(activeTournament.tournamentLength?.toString() ?? ''); setShowLengthSetter(true); }}
+              className="text-xs text-slate-400 hover:text-white transition-colors underline decoration-dotted"
+            >
+              {activeTournament.tournamentLength ? '✏️ Change length' : '⚙️ Set tournament length'}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Action buttons ────────────────────────────────────────── */}
+        <div className="flex flex-wrap justify-center gap-2 mb-6">
+          {activeTournament.mode === 'league' && (
             <button
               onClick={() => setShowAddMatch(true)}
-              className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors shadow-lg"
+              disabled={isComplete}
+              className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold transition-colors"
             >
               ➕ Add Match Result
             </button>
+          )}
+          <button
+            onClick={() => setShowEditTeams(true)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-colors"
+          >
+            ✏️ Edit Teams
+          </button>
+          <button
+            onClick={() => setShowHistory(true)}
+            className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-sm font-bold transition-colors"
+          >
+            🕐 View History
+          </button>
+          <button
+            onClick={() => setShowImportExport(true)}
+            className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-sm font-bold transition-colors"
+          >
+            📤 Import / Export
+          </button>
+          <button
+            onClick={onResetTournament}
+            className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-xl text-sm font-bold transition-colors"
+          >
+            🔄 Reset Tournament
+          </button>
+          {isComplete && (
             <button
-              onClick={() => setShowEditTeams(!showEditTeams)}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors shadow-lg"
+              onClick={() => updateCollection((t) => ({ ...t!, celebrationShown: false }))}
+              className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-xl text-sm font-bold transition-colors"
             >
-              ✏️ {showEditTeams ? 'Done Editing' : 'Edit Teams'}
+              🏆 Show Results
             </button>
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors shadow-lg"
-            >
-              🕘 {showHistory ? 'Hide History' : 'View History'}
-            </button>
-            <button
-              onClick={() => setShowImportExport(!showImportExport)}
-              className="px-6 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors shadow-lg"
-            >
-              📦 Import / Export
-            </button>
-            <button
-              onClick={onResetTournament}
-              className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors shadow-lg"
-            >
-              🔄 Reset Tournament
-            </button>
-          </div>
+          )}
         </div>
 
-        {showImportExport && (
-          <div className="bg-slate-800/50 backdrop-blur rounded-lg p-6 mb-6 border border-slate-700">
-            <h3 className="text-xl font-bold text-white mb-4">Import / Export Tournament</h3>
-            <textarea
-              value={importText}
-              onChange={(e) => setImportText(e.target.value)}
-              className="w-full h-36 bg-slate-700 text-white rounded-lg px-4 py-3 border border-slate-600"
-              placeholder="Paste tournament JSON here"
-            />
-            <div className="flex flex-wrap gap-3 mt-4">
-              <button
-                onClick={onImportTournament}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg"
-              >
-                Import
-              </button>
-              <button
-                onClick={onExportTournament}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
-              >
-                Export
-              </button>
-              <button
-                onClick={shareTournament}
-                className="px-4 py-2 bg-fuchsia-600 hover:bg-fuchsia-700 text-white rounded-lg"
-              >
-                Share
-              </button>
-              <button
-                onClick={copyImportText}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
-              >
-                Copy JSON
-              </button>
-              <button
-                onClick={downloadTournament}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
-              >
-                Download JSON
-              </button>
-              <button
-                onClick={() => setShowImportExport(false)}
-                className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg"
-              >
-                Close
-              </button>
-            </div>
-          </div>
+        {/* ── Queue panel (Winner Stays On mode) ───────────────────── */}
+        {activeTournament.mode === 'queue' && !isComplete && (
+          <QueuePanel tournament={activeTournament} onResult={onQueueResult} />
         )}
 
-        {/* Add Match Modal */}
-        {showAddMatch && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700 shadow-2xl">
-              <h2 className="text-2xl font-bold text-white mb-4">Add Match Result</h2>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-slate-300 mb-2">Team 1</label>
-                  <select
-                    value={team1Id}
-                    onChange={(e) => setTeam1Id(parseInt(e.target.value))}
-                    className="w-full bg-slate-700 text-white rounded-lg px-4 py-2 border border-slate-600"
-                  >
-                    {teams.map(team => (
-                      <option key={team.id} value={team.id}>{team.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-slate-300 mb-2">Score</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={team1Score}
-                      onChange={(e) => setTeam1Score(e.target.value)}
-                      className="w-full bg-slate-700 text-white rounded-lg px-4 py-2 border border-slate-600"
-                      placeholder="0"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-300 mb-2">Score</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={team2Score}
-                      onChange={(e) => setTeam2Score(e.target.value)}
-                      className="w-full bg-slate-700 text-white rounded-lg px-4 py-2 border border-slate-600"
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 mb-2">Team 2</label>
-                  <select
-                    value={team2Id}
-                    onChange={(e) => setTeam2Id(parseInt(e.target.value))}
-                    className="w-full bg-slate-700 text-white rounded-lg px-4 py-2 border border-slate-600"
-                  >
-                    {teams.map(team => (
-                      <option key={team.id} value={team.id}>{team.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-6">
-                <button
-                  onClick={addResult}
-                  className="flex-1 bg-green-600 hover:bg-green-700 text-white rounded-lg py-2 font-medium transition-colors"
-                >
-                  Add Result
-                </button>
-                <button
-                  onClick={() => setShowAddMatch(false)}
-                  className="flex-1 bg-slate-600 hover:bg-slate-700 text-white rounded-lg py-2 font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Edit Teams Section */}
-        {showEditTeams && (
-          <div className="bg-slate-800/50 backdrop-blur rounded-lg p-6 mb-6 border border-slate-700">
-            <h3 className="text-xl font-bold text-white mb-4">Edit Teams</h3>
-            <div className="space-y-3">
-              {teams.map(team => (
-                <div key={team.id} className="flex gap-3">
-                  <input
-                    type="text"
-                    value={team.name}
-                    onChange={(e) => onUpdateTeamName(team.id, e.target.value)}
-                    className="flex-1 bg-slate-700 text-white rounded-lg px-4 py-2 border border-slate-600"
-                  />
-                  <button
-                    onClick={() => onRemoveTeam(team.id)}
-                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <button
-                onClick={onAddNewTeam}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-lg py-2 font-medium transition-colors"
-              >
-                + Add New Team
-              </button>
-            </div>
-          </div>
-        )}
-
-        {showHistory && (
-          <div className="bg-slate-800/50 backdrop-blur rounded-lg p-6 mb-6 border border-slate-700">
-            <h3 className="text-xl font-bold text-white mb-4">Recent Match History</h3>
-            <div className="space-y-2">
-              {recentMatches.length > 0 ? recentMatches.map((match) => {
-                const homeTeam = teams.find((team) => team.id === match.homeTeamId);
-                const awayTeam = teams.find((team) => team.id === match.awayTeamId);
-                return (
-                  <div key={match.id} className="rounded-lg bg-slate-700/70 p-3 text-slate-200">
-                    <span className="font-semibold text-white">{homeTeam?.name ?? 'Unknown'}</span> {match.homeScore} - {match.awayScore} <span className="font-semibold text-white">{awayTeam?.name ?? 'Unknown'}</span>
-                  </div>
-                );
-              }) : <p className="text-slate-400">No matches recorded yet.</p>}
-            </div>
-          </div>
-        )}
-
-        {/* Legend */}
-        <div className="bg-slate-800/50 backdrop-blur rounded-lg p-4 mb-6 border border-slate-700">
-          <div className="flex flex-wrap gap-4 justify-center text-sm">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 border-l-4 border-l-yellow-400 bg-yellow-500/20"></div>
-              <span className="text-slate-300">🥇 Champion</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 border-l-4 border-l-gray-300 bg-gray-300/20"></div>
-              <span className="text-slate-300">🥈 Runner-up</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 border-l-4 border-l-orange-600 bg-orange-600/20"></div>
-              <span className="text-slate-300">🥉 Third Place</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 border-l-4 border-l-red-500 bg-red-500/20"></div>
-              <span className="text-slate-300">Last Place</span>
-            </div>
-          </div>
+        {/* ── Legend ───────────────────────────────────────────────── */}
+        <div className="flex flex-wrap justify-center gap-4 text-xs text-slate-300 mb-4 bg-slate-800/30 rounded-lg p-3">
+          <span>🟡 Champion</span>
+          <span>⬜ Runner-up</span>
+          <span>🟫 Third Place</span>
+          <span>🔴 Last Place</span>
         </div>
 
-        {/* Table */}
+        {/* ── Desktop table ────────────────────────────────────────── */}
         <div className="bg-slate-800/50 backdrop-blur rounded-xl overflow-hidden border border-slate-700 shadow-2xl">
-          {/* Desktop View */}
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="bg-slate-900/80 text-slate-300 text-sm uppercase tracking-wider">
-                  <th className="px-4 py-4 text-left w-16">Pos</th>
-                  <th className="px-4 py-4 text-left">Team</th>
-                  <th className="px-4 py-4 text-center w-16">PL</th>
-                  <th className="px-4 py-4 text-center w-16">W</th>
-                  <th className="px-4 py-4 text-center w-16">D</th>
-                  <th className="px-4 py-4 text-center w-16">L</th>
-                  <th className="px-4 py-4 text-center w-24">GF</th>
-                  <th className="px-4 py-4 text-center w-24">GA</th>
-                  <th className="px-4 py-4 text-center w-24">GD</th>
-                  <th className="px-4 py-4 text-left w-48">Form</th>
-                  <th className="px-4 py-4 text-center w-20 font-bold">PTS</th>
+                <tr className="bg-slate-900/50 text-slate-400 text-xs uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left w-16">POS</th>
+                  <th className="px-4 py-3 text-left">TEAM</th>
+                  <th className="px-4 py-3 text-center">PL</th>
+                  <th className="px-4 py-3 text-center">W</th>
+                  <th className="px-4 py-3 text-center">D</th>
+                  <th className="px-4 py-3 text-center">L</th>
+                  <th className="px-4 py-3 text-center">GF</th>
+                  <th className="px-4 py-3 text-center">GA</th>
+                  <th className="px-4 py-3 text-center">GD</th>
+                  <th className="px-4 py-3 text-center">FORM</th>
+                  <th className="px-4 py-3 text-center">PTS</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedTeams.map((team, index) => {
                   const position = index + 1;
-                  const positionChange = getPositionChange(position, team.previousPosition);
-                  
+                  const posChange = getPositionChange(position, team.previousPosition);
+                  const isOnCourt =
+                    activeTournament.mode === 'queue' && activeTournament.onCourt.includes(team.id);
                   return (
                     <tr
                       key={team.id}
                       className={cn(
-                        'border-b border-slate-700/50 hover:bg-slate-700/30 transition-all duration-300',
+                        'border-t border-slate-700/50 transition-all duration-700',
                         getZoneClass(position, sortedTeams.length),
-                        showAnimation ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+                        isOnCourt ? 'bg-purple-900/30' : 'hover:bg-slate-700/30'
                       )}
-                      style={{ transitionDelay: `${index * 30}ms` }}
                     >
                       <td className="px-4 py-4">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-white text-lg">{position}</span>
-                          {positionChange && (
-                            <div className="flex flex-col items-center">
-                              {positionChange.direction === 'up' && (
-                                <span className="text-green-400 text-xs flex items-center">
-                                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fillRule="evenodd" d="M10 17a.75.75 0 01-.75-.75V5.612L5.29 9.77a.75.75 0 01-1.08-1.04l5.25-5.5a.75.75 0 011.08 0l5.25 5.5a.75.75 0 11-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0110 17z" clipRule="evenodd" />
-                                  </svg>
-                                  {positionChange.value}
-                                </span>
-                              )}
-                              {positionChange.direction === 'down' && (
-                                <span className="text-red-400 text-xs flex items-center">
-                                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fillRule="evenodd" d="M10 3a.75.75 0 01.75.75v10.638l3.96-4.158a.75.75 0 111.08 1.04l-5.25 5.5a.75.75 0 01-1.08 0l-5.25-5.5a.75.75 0 111.08-1.04l3.96 4.158V3.75A.75.75 0 0110 3z" clipRule="evenodd" />
-                                  </svg>
-                                  {positionChange.value}
-                                </span>
-                              )}
-                              {positionChange.direction === 'same' && (
-                                <span className="text-gray-400 text-xs">─</span>
-                              )}
-                            </div>
-                          )}
+                        <div className="flex items-center gap-1">
+                          <span className="text-white font-bold">{position}</span>
+                          {posChange === 'up' && <span className="text-green-400 text-xs">↑{Math.abs((team.previousPosition ?? position) - position)}</span>}
+                          {posChange === 'down' && <span className="text-red-400 text-xs">↓{Math.abs((team.previousPosition ?? position) - position)}</span>}
+                          {!posChange && <span className="text-slate-500 text-xs">—</span>}
                         </div>
                       </td>
                       <td className="px-4 py-4">
-                        <span className="text-white font-semibold">{team.name}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-semibold">{team.name}</span>
+                          {isOnCourt && (
+                            <span className="text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded font-bold">ON</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-4 text-center text-slate-300">{team.played}</td>
-                      <td className="px-4 py-4 text-center text-slate-300">{team.won}</td>
+                      <td className="px-4 py-4 text-center text-green-400 font-medium">{team.won}</td>
                       <td className="px-4 py-4 text-center text-slate-300">{team.drawn}</td>
-                      <td className="px-4 py-4 text-center text-slate-300">{team.lost}</td>
+                      <td className="px-4 py-4 text-center text-red-400">{team.lost}</td>
                       <td className="px-4 py-4 text-center text-slate-300">{team.goalsFor}</td>
                       <td className="px-4 py-4 text-center text-slate-300">{team.goalsAgainst}</td>
-                      <td className={cn(
-                        'px-4 py-4 text-center font-semibold',
-                        team.goalDifference > 0 ? 'text-green-400' : team.goalDifference < 0 ? 'text-red-400' : 'text-slate-300'
-                      )}>
-                        {team.goalDifference > 0 ? '+' : ''}{team.goalDifference}
+                      <td className={cn('px-4 py-4 text-center font-medium', team.goalDifference > 0 ? 'text-green-400' : team.goalDifference < 0 ? 'text-red-400' : 'text-slate-300')}>
+                        {team.goalDifference > 0 ? `+${team.goalDifference}` : team.goalDifference}
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex gap-1">
-                          {team.form.length > 0 ? [...team.form].reverse().map((result, i) => (
-                            <div
-                              key={i}
-                              className={cn(
-                                'w-7 h-7 rounded flex items-center justify-center text-white text-xs font-bold',
-                                getFormColor(result)
-                              )}
-                              title={result === 'W' ? 'Win' : result === 'D' ? 'Draw' : 'Loss'}
-                            >
-                              {result}
-                            </div>
-                          )) : (
-                            <span className="text-slate-500 text-sm">No matches yet</span>
-                          )}
+                          {team.form.length > 0
+                            ? [...team.form].reverse().map((result, i) => (
+                                <div
+                                  key={i}
+                                  className={cn('w-7 h-7 rounded flex items-center justify-center text-white text-xs font-bold', getFormColor(result))}
+                                  title={result === 'W' ? 'Win' : result === 'D' ? 'Draw' : 'Loss'}
+                                >
+                                  {result}
+                                </div>
+                              ))
+                            : <span className="text-slate-500 text-sm">—</span>}
                         </div>
                       </td>
                       <td className="px-4 py-4 text-center">
-                        <span className="text-white font-bold text-lg">{team.points}</span>
+                        <span className="text-white font-black text-lg">{team.points}</span>
                       </td>
                     </tr>
                   );
@@ -653,77 +677,54 @@ function App() {
             </table>
           </div>
 
-          {/* Mobile View */}
+          {/* ── Mobile cards ─────────────────────────────────────────── */}
           <div className="md:hidden">
             {sortedTeams.map((team, index) => {
               const position = index + 1;
-              const positionChange = getPositionChange(position, team.previousPosition);
-              
+              const posChange = getPositionChange(position, team.previousPosition);
+              const isOnCourt =
+                activeTournament.mode === 'queue' && activeTournament.onCourt.includes(team.id);
               return (
                 <div
                   key={team.id}
                   className={cn(
-                    'border-b border-slate-700/50 p-4 transition-all duration-300',
+                    'border-t border-slate-700/50 p-4 transition-all duration-700',
                     getZoneClass(position, sortedTeams.length),
-                    showAnimation ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+                    isOnCourt ? 'bg-purple-900/30' : ''
                   )}
-                  style={{ transitionDelay: `${index * 30}ms` }}
                 >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-start gap-3">
-                      <div className="flex flex-col items-center">
-                        <span className="font-bold text-white text-xl">{position}</span>
-                        {positionChange && positionChange.direction !== 'same' && (
-                          <span className={cn(
-                            'text-xs flex items-center',
-                            positionChange.direction === 'up' ? 'text-green-400' : 'text-red-400'
-                          )}>
-                            {positionChange.direction === 'up' ? '↑' : '↓'}{positionChange.value}
-                          </span>
-                        )}
-                      </div>
-                      <div>
-                        <div className="text-white font-semibold text-lg">{team.name}</div>
-                        <div className="text-slate-400 text-sm">
-                          {team.won}W - {team.drawn}D - {team.lost}L
-                        </div>
-                      </div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl font-black text-white">{position}</span>
+                      {posChange === 'up' && <span className="text-green-400 text-sm">↑{Math.abs((team.previousPosition ?? position) - position)}</span>}
+                      {posChange === 'down' && <span className="text-red-400 text-sm">↓{Math.abs((team.previousPosition ?? position) - position)}</span>}
+                      {!posChange && <span className="text-slate-500 text-sm">—</span>}
+                      <span className="text-white font-semibold">{team.name}</span>
+                      {isOnCourt && (
+                        <span className="text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded font-bold">ON</span>
+                      )}
                     </div>
-                    <div className="text-right">
-                      <div className="text-white font-bold text-2xl">{team.points}</div>
-                      <div className="text-slate-400 text-xs">PTS</div>
-                    </div>
+                    <div className="text-white font-black text-2xl">{team.points}</div>
                   </div>
-                  
-                  <div className="grid grid-cols-3 gap-2 mb-3 text-sm">
-                    <div className="text-slate-300">
-                      <span className="text-slate-400">GF:</span> {team.goalsFor}
-                    </div>
-                    <div className="text-slate-300">
-                      <span className="text-slate-400">GA:</span> {team.goalsAgainst}
-                    </div>
-                    <div className={cn(
-                      'font-semibold',
-                      team.goalDifference > 0 ? 'text-green-400' : team.goalDifference < 0 ? 'text-red-400' : 'text-slate-300'
-                    )}>
-                      <span className="text-slate-400 font-normal">GD:</span> {team.goalDifference > 0 ? '+' : ''}{team.goalDifference}
-                    </div>
+                  <div className="grid grid-cols-6 gap-1 text-center text-xs mb-3">
+                    {[['PL', team.played], ['W', team.won], ['D', team.drawn], ['L', team.lost], ['GF', team.goalsFor], ['GA', team.goalsAgainst]].map(([label, val]) => (
+                      <div key={label as string} className="bg-slate-700/50 rounded p-1.5">
+                        <div className="text-slate-400 text-xs">{label}</div>
+                        <div className="text-white font-bold">{val}</div>
+                      </div>
+                    ))}
                   </div>
-                  
                   <div className="flex gap-1">
-                    {team.form.length > 0 ? [...team.form].reverse().map((result, i) => (
-                      <div
-                        key={i}
-                        className={cn(
-                          'flex-1 h-7 rounded flex items-center justify-center text-white text-xs font-bold',
-                          getFormColor(result)
-                        )}
-                      >
-                        {result}
-                      </div>
-                    )) : (
-                      <span className="text-slate-500 text-sm">No matches yet</span>
-                    )}
+                    {team.form.length > 0
+                      ? [...team.form].reverse().map((result, i) => (
+                          <div
+                            key={i}
+                            className={cn('flex-1 h-7 rounded flex items-center justify-center text-white text-xs font-bold', getFormColor(result))}
+                          >
+                            {result}
+                          </div>
+                        ))
+                      : <span className="text-slate-500 text-sm">No matches yet</span>}
                   </div>
                 </div>
               );
@@ -731,7 +732,7 @@ function App() {
           </div>
         </div>
 
-        {/* Additional Info */}
+        {/* ── Footer info ───────────────────────────────────────────── */}
         <div className="mt-6 text-center text-purple-200 text-sm">
           <p>PL = Played, W = Won, D = Drawn, L = Lost</p>
           <p>GF = Goals/Points For, GA = Goals/Points Against, GD = Goal/Point Difference, PTS = Points</p>
@@ -749,8 +750,169 @@ function App() {
           </p>
         </div>
       </div>
+
+      {/* ══ MODALS ══════════════════════════════════════════════════════════ */}
+
+      {/* ── Tournament length setter ─────────────────────────────── */}
+      {showLengthSetter && (
+        <div className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4">
+          <div className="bg-slate-800 rounded-2xl border border-slate-600 p-6 w-full max-w-sm">
+            <h2 className="text-xl font-bold text-white mb-2">⚙️ Tournament Length</h2>
+            <p className="text-slate-400 text-sm mb-4">
+              Set a total number of matches. The tournament ends and a winner is declared when that number is reached. Leave blank for an unlimited tournament.
+            </p>
+            <input
+              type="number"
+              min="1"
+              value={pendingLength}
+              onChange={(e) => setPendingLength(e.target.value)}
+              placeholder="e.g. 20"
+              className="w-full bg-slate-700 border border-slate-600 text-white text-center text-2xl font-bold rounded-xl py-3 outline-none focus:border-purple-400 mb-4"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setShowLengthSetter(false)} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl transition-colors">
+                Cancel
+              </button>
+              {activeTournament.tournamentLength && (
+                <button
+                  onClick={() => { updateCollection((t) => setTournamentLength(t!, null)); setShowLengthSetter(false); }}
+                  className="flex-1 py-2 bg-red-700 hover:bg-red-600 text-white rounded-xl transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+              <button onClick={onSaveLength} className="flex-1 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors">
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add Match (league mode) ──────────────────────────────── */}
+      {showAddMatch && (
+        <div className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4">
+          <div className="bg-slate-800 rounded-2xl border border-slate-600 p-6 w-full max-w-md">
+            <h2 className="text-2xl font-bold text-white mb-4">Add Match Result</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="text-slate-400 text-sm mb-1 block">Home Team</label>
+                <select value={homeTeamId ?? ''} onChange={(e) => setHomeTeamId(parseInt(e.target.value))} className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 focus:outline-none focus:border-purple-400">
+                  <option value="">Select team…</option>
+                  {activeTournament.teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="text-slate-400 text-sm mb-1 block">Home Score</label>
+                  <input type="number" min="0" value={homeScore} onChange={(e) => setHomeScore(e.target.value)} className="w-full bg-slate-700 border border-slate-600 text-white text-center text-xl rounded-lg py-2 outline-none focus:border-purple-400" placeholder="0" />
+                </div>
+                <div className="flex-1">
+                  <label className="text-slate-400 text-sm mb-1 block">Away Score</label>
+                  <input type="number" min="0" value={awayScore} onChange={(e) => setAwayScore(e.target.value)} className="w-full bg-slate-700 border border-slate-600 text-white text-center text-xl rounded-lg py-2 outline-none focus:border-purple-400" placeholder="0" />
+                </div>
+              </div>
+              <div>
+                <label className="text-slate-400 text-sm mb-1 block">Away Team</label>
+                <select value={awayTeamId ?? ''} onChange={(e) => setAwayTeamId(parseInt(e.target.value))} className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 focus:outline-none focus:border-purple-400">
+                  <option value="">Select team…</option>
+                  {activeTournament.teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-6">
+              <button onClick={() => setShowAddMatch(false)} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl transition-colors">Cancel</button>
+              <button onClick={onAddMatch} disabled={!homeTeamId || !awayTeamId || homeTeamId === awayTeamId} className="flex-1 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors">Add Result</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Teams ──────────────────────────────────────────────── */}
+      {showEditTeams && (
+        <div className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4">
+          <div className="bg-slate-800 rounded-2xl border border-slate-600 p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <h2 className="text-2xl font-bold text-white mb-4">✏️ Edit Teams</h2>
+            <div className="space-y-3 mb-4">
+              {activeTournament.teams.map((team) => (
+                <div key={team.id} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newTeamNames[team.id] ?? team.name}
+                    onChange={(e) => setNewTeamNames((prev) => ({ ...prev, [team.id]: e.target.value }))}
+                    className="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 outline-none focus:border-purple-400"
+                  />
+                  <button onClick={() => onRemoveTeam(team.id)} className="px-3 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors text-sm">✕</button>
+                </div>
+              ))}
+            </div>
+            <button onClick={onAddTeam} className="w-full py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl mb-4 transition-colors text-sm">+ Add Team</button>
+            <div className="flex gap-2">
+              <button onClick={() => setShowEditTeams(false)} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl transition-colors">Cancel</button>
+              <button onClick={onSaveTeamNames} className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-colors">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Match History ────────────────────────────────────────── */}
+      {showHistory && (
+        <div className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4">
+          <div className="bg-slate-800 rounded-2xl border border-slate-600 p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <h2 className="text-2xl font-bold text-white mb-4">🕐 Match History</h2>
+            {activeTournament.matches.length === 0
+              ? <p className="text-slate-400 text-center py-8">No matches yet</p>
+              : (
+                <div className="space-y-2">
+                  {activeTournament.matches.map((match) => {
+                    const home = activeTournament.teams.find((t) => t.id === match.homeTeamId);
+                    const away = activeTournament.teams.find((t) => t.id === match.awayTeamId);
+                    return (
+                      <div key={match.id} className="bg-slate-700/50 rounded-lg p-3 flex items-center justify-between">
+                        <span className="text-white text-sm font-medium flex-1 text-right">{home?.name}</span>
+                        <span className="text-white font-black mx-3 text-lg">{match.homeScore} – {match.awayScore}</span>
+                        <span className="text-white text-sm font-medium flex-1">{away?.name}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            <button onClick={() => setShowHistory(false)} className="w-full mt-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl transition-colors">Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Import / Export ──────────────────────────────────────── */}
+      {showImportExport && (
+        <div className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4">
+          <div className="bg-slate-800 rounded-2xl border border-slate-600 p-6 w-full max-w-md">
+            <h2 className="text-2xl font-bold text-white mb-4">📤 Import / Export</h2>
+            <div className="space-y-3 mb-4">
+              <button onClick={onExport} className="w-full py-2 bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-xl transition-colors">⬇️ Download JSON</button>
+              <button onClick={onShare} className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors">📲 Share</button>
+            </div>
+            <hr className="border-slate-600 mb-4" />
+            <label className="text-slate-400 text-sm mb-2 block">Import JSON</label>
+            <textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder="Paste tournament JSON here…"
+              className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg p-3 outline-none focus:border-purple-400 text-sm h-28 resize-none mb-3"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setShowImportExport(false)} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl transition-colors">Cancel</button>
+              <button onClick={onImport} disabled={!importText.trim()} className="flex-1 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white font-bold rounded-xl transition-colors">Import</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Toast ───────────────────────────────────────────────── */}
+      {shareToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-700 text-white text-sm font-medium px-5 py-3 rounded-full shadow-xl z-50">
+          {shareToast}
+        </div>
+      )}
     </div>
   );
 }
-
-export default App;
