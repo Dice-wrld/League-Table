@@ -37,8 +37,8 @@ export default function StandingsPage({ tournament }: StandingsPageProps) {
 
       {/* Desktop table */}
       <div className="bg-slate-800/50 backdrop-blur rounded-xl overflow-hidden border border-slate-700 shadow-2xl">
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full">
+        <div className="hidden md:block overflow-x-auto scroll-auto">
+          <table className="w-full min-w-[640px]">
             <thead>
               <tr className="bg-slate-900/50 text-slate-400 text-xs uppercase tracking-wider">
                 <th className="px-4 py-3 text-left w-16">POS</th>
@@ -94,7 +94,7 @@ export default function StandingsPage({ tournament }: StandingsPageProps) {
                     <td className="px-4 py-4">
                       <div className="flex gap-1">
                         {team.form.length > 0
-                          ? [...team.form].reverse().map((r, i) => (
+                          ? [...team.form].slice(0, 5).reverse().map((r, i) => (
                               <div key={i} className={cn('w-6 h-6 rounded flex items-center justify-center text-white text-xs font-bold', getFormColor(r))}>{r}</div>
                             ))
                           : <span className="text-slate-500 text-sm">—</span>}
@@ -146,7 +146,7 @@ export default function StandingsPage({ tournament }: StandingsPageProps) {
                 </div>
                 <div className="flex gap-1">
                   {team.form.length > 0
-                    ? [...team.form].reverse().map((r, i) => (
+                    ? [...team.form].slice(0, 5).reverse().map((r, i) => (
                         <div key={i} className={cn('flex-1 h-6 rounded flex items-center justify-center text-white text-xs font-bold', getFormColor(r))}>{r}</div>
                       ))
                     : <span className="text-slate-500 text-sm">No matches yet</span>}
