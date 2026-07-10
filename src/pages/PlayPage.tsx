@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '../utils/cn';
 import { getH2H, sortTeams, type TournamentData } from '../lib/tournament';
 
@@ -21,7 +21,43 @@ interface PlayPageProps {
 }
 
 export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, onAddMatch, onArrangeQueue, sessionStart }: PlayPageProps) {
+  const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const accumulatedRef = useRef(0);
+  const lastTickRef = useRef(sessionStart);
+
+  useEffect(() => {
+    if (paused) return;
+    const iv = setInterval(() => {
+      const now = Date.now();
+      accumulatedRef.current += now - lastTickRef.current;
+      lastTickRef.current = now;
+      setElapsed(Math.floor(accumulatedRef.current / 1000));
+    }, 1000);
+    lastTickRef.current = Date.now();
+    return () => clearInterval(iv);
+  }, [paused, sessionStart]);
+
+  const handlePause = () => {
+    if (!paused) {
+      // Capture elapsed so far before pausing
+      accumulatedRef.current += Date.now() - lastTickRef.current;
+      setElapsed(Math.floor(accumulatedRef.current / 1000));
+    } else {
+      // Resume — reset the tick reference
+      lastTickRef.current = Date.now();
+    }
+    setPaused((p) => !p);
+  };
+
+  const handleResetTimer = () => {
+    accumulatedRef.current = 0;
+    lastTickRef.current = Date.now();
+    setElapsed(0);
+    setPaused(false);
+  };
+
+  // Queue score entry
   const [homeScore, setHomeScore] = useState('');
   const [awayScore, setAwayScore] = useState('');
   const [scoreMode, setScoreMode] = useState(false);
@@ -33,11 +69,6 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
   const [lAwayId, setLAwayId] = useState<number | null>(null);
   const [lHomeScore, setLHomeScore] = useState('');
   const [lAwayScore, setLAwayScore] = useState('');
-
-  useEffect(() => {
-    const iv = setInterval(() => setElapsed(Math.floor((Date.now() - sessionStart) / 1000)), 1000);
-    return () => clearInterval(iv);
-  }, [sessionStart]);
 
   const sortedTeams = sortTeams(tournament.teams);
   const homeTeam = tournament.teams.find((t) => t.id === tournament.onCourt[0]);
@@ -87,13 +118,23 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
         <div className="flex items-center justify-between bg-slate-800/40 rounded-xl px-4 py-3">
           <div>
             <span className="text-slate-400 text-xs uppercase tracking-wider">Session</span>
-            <div className="text-white font-mono font-bold text-xl">{formatTime(elapsed)}</div>
+            <div className={cn('font-mono font-bold text-xl', paused ? 'text-slate-400' : 'text-white')}>
+              {formatTime(elapsed)} {paused && <span className="text-xs text-slate-500">paused</span>}
+            </div>
           </div>
-          {canUndo && (
-            <button onClick={onUndo} className="flex items-center gap-1.5 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm transition-colors">
-              ↩️ Undo
+          <div className="flex gap-2">
+            <button onClick={handlePause} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs transition-colors">
+              {paused ? '▶ Resume' : '⏸ Pause'}
             </button>
-          )}
+            <button onClick={handleResetTimer} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-lg text-xs transition-colors">
+              ↺ Reset
+            </button>
+            {canUndo && (
+              <button onClick={onUndo} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs transition-colors">
+                ↩️ Undo
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Add match form */}
@@ -149,15 +190,23 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
       <div className="flex items-center justify-between bg-slate-800/40 rounded-xl px-4 py-3">
         <div>
           <span className="text-slate-400 text-xs uppercase tracking-wider">Session</span>
-          <div className="text-white font-mono font-bold text-xl">{formatTime(elapsed)}</div>
+          <div className={cn('font-mono font-bold text-xl', paused ? 'text-slate-400' : 'text-white')}>
+            {formatTime(elapsed)} {paused && <span className="text-xs text-slate-500">paused</span>}
+          </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
+          <button onClick={handlePause} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs transition-colors">
+            {paused ? '▶ Resume' : '⏸ Pause'}
+          </button>
+          <button onClick={handleResetTimer} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-lg text-xs transition-colors">
+            ↺ Reset
+          </button>
           {canUndo && (
-            <button onClick={onUndo} className="flex items-center gap-1.5 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm transition-colors">
+            <button onClick={onUndo} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs transition-colors">
               ↩️ Undo
             </button>
           )}
-          <button onClick={openArrange} className="px-3 py-2 text-slate-400 hover:text-white border border-slate-600 hover:border-slate-400 rounded-xl text-xs transition-colors">
+          <button onClick={openArrange} className="px-3 py-1.5 text-slate-400 hover:text-white border border-slate-600 hover:border-slate-400 rounded-lg text-xs transition-colors">
             🔀 Arrange
           </button>
         </div>
