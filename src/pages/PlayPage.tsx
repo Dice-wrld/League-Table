@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { cn } from '../utils/cn';
 import { getH2H, sortTeams, type TournamentData } from '../lib/tournament';
 
@@ -6,8 +6,30 @@ function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// Score input that shows numeric keyboard on mobile, no spin buttons anywhere
+function ScoreInput({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) {
+  return (
+    <div className="flex-1 flex flex-col items-center">
+      <div className="text-slate-400 text-xs mb-1">{label}</div>
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        autoComplete="off"
+        value={value}
+        onChange={(e) => {
+          const val = e.target.value.replace(/[^0-9]/g, '');
+          onChange(val);
+        }}
+        placeholder="0"
+        className="w-full bg-slate-700 border border-slate-600 text-white text-center text-3xl font-bold rounded-xl py-4 outline-none focus:border-purple-400 caret-purple-400"
+      />
+    </div>
+  );
 }
 
 interface PlayPageProps {
@@ -17,50 +39,20 @@ interface PlayPageProps {
   onQueueResult: (homeScore: number, awayScore: number) => void;
   onAddMatch: (homeId: number, awayId: number, homeScore: number, awayScore: number) => void;
   onArrangeQueue: (order: number[]) => void;
-  sessionStart: number;
+  timerElapsed: number;
+  timerPaused: boolean;
+  onPauseTimer: () => void;
+  onResetTimer: () => void;
 }
 
-export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, onAddMatch, onArrangeQueue, sessionStart }: PlayPageProps) {
-  const [paused, setPaused] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const accumulatedRef = useRef(0);
-  const lastTickRef = useRef(sessionStart);
-
-  useEffect(() => {
-    if (paused) return;
-    const iv = setInterval(() => {
-      const now = Date.now();
-      accumulatedRef.current += now - lastTickRef.current;
-      lastTickRef.current = now;
-      setElapsed(Math.floor(accumulatedRef.current / 1000));
-    }, 1000);
-    lastTickRef.current = Date.now();
-    return () => clearInterval(iv);
-  }, [paused, sessionStart]);
-
-  const handlePause = () => {
-    if (!paused) {
-      // Capture elapsed so far before pausing
-      accumulatedRef.current += Date.now() - lastTickRef.current;
-      setElapsed(Math.floor(accumulatedRef.current / 1000));
-    } else {
-      // Resume — reset the tick reference
-      lastTickRef.current = Date.now();
-    }
-    setPaused((p) => !p);
-  };
-
-  const handleResetTimer = () => {
-    accumulatedRef.current = 0;
-    lastTickRef.current = Date.now();
-    setElapsed(0);
-    setPaused(false);
-  };
-
-  // Queue score entry
+export default function PlayPage({
+  tournament, canUndo, onUndo,
+  onQueueResult, onAddMatch, onArrangeQueue,
+  timerElapsed, timerPaused, onPauseTimer, onResetTimer,
+}: PlayPageProps) {
+  const [scoreMode, setScoreMode] = useState(false);
   const [homeScore, setHomeScore] = useState('');
   const [awayScore, setAwayScore] = useState('');
-  const [scoreMode, setScoreMode] = useState(false);
   const [error, setError] = useState('');
   const [showArrange, setShowArrange] = useState(false);
   const [queueDraft, setQueueDraft] = useState<number[]>([]);
@@ -73,7 +65,9 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
   const sortedTeams = sortTeams(tournament.teams);
   const homeTeam = tournament.teams.find((t) => t.id === tournament.onCourt[0]);
   const awayTeam = tournament.teams.find((t) => t.id === tournament.onCourt[1]);
-  const queue = tournament.queueOrder.map((id) => tournament.teams.find((t) => t.id === id)).filter(Boolean);
+  const queue = tournament.queueOrder
+    .map((id) => tournament.teams.find((t) => t.id === id))
+    .filter(Boolean);
   const h2h = homeTeam && awayTeam ? getH2H(tournament.matches, homeTeam.id, awayTeam.id) : null;
 
   const handleQuickResult = (h: number, a: number) => {
@@ -82,7 +76,8 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
   };
 
   const handleDetailedResult = () => {
-    const h = parseInt(homeScore), a = parseInt(awayScore);
+    const h = parseInt(homeScore);
+    const a = parseInt(awayScore);
     if (isNaN(h) || isNaN(a) || h < 0 || a < 0) { setError('Enter valid scores'); return; }
     setError(''); setHomeScore(''); setAwayScore(''); setScoreMode(false);
     onQueueResult(h, a);
@@ -90,14 +85,20 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
 
   const handleLeagueSubmit = () => {
     if (!lHomeId || !lAwayId || lHomeId === lAwayId) return;
-    const h = parseInt(lHomeScore), a = parseInt(lAwayScore);
-    if (isNaN(h) || isNaN(a)) return;
+    const h = parseInt(lHomeScore);
+    const a = parseInt(lAwayScore);
+    if (isNaN(h) || isNaN(a) || h < 0 || a < 0) return;
     onAddMatch(lHomeId, lAwayId, h, a);
     setLHomeScore(''); setLAwayScore('');
   };
 
   const moveQueueItem = (from: number, to: number) => {
-    setQueueDraft((prev) => { const next = [...prev]; const [item] = next.splice(from, 1); next.splice(to, 0, item); return next; });
+    setQueueDraft((prev) => {
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
   };
 
   const openArrange = () => {
@@ -110,57 +111,80 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
     setShowArrange(false);
   };
 
-  // ── League mode ──────────────────────────────────────────────────────────
+  // ── Shared timer bar ──────────────────────────────────────────────────────
+  const TimerBar = () => (
+    <div className="flex items-center justify-between bg-slate-800/40 rounded-xl px-4 py-3">
+      <div>
+        <div className="text-slate-400 text-xs uppercase tracking-wider">Session</div>
+        <div className={cn('font-mono font-bold text-xl', timerPaused ? 'text-slate-500' : 'text-white')}>
+          {formatTime(timerElapsed)}
+          {timerPaused && <span className="text-xs text-slate-600 ml-2">paused</span>}
+        </div>
+      </div>
+      <div className="flex gap-1.5 flex-wrap justify-end">
+        <button onClick={onPauseTimer} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs transition-colors">
+          {timerPaused ? '▶ Resume' : '⏸ Pause'}
+        </button>
+        <button onClick={onResetTimer} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-lg text-xs transition-colors">
+          ↺ Reset
+        </button>
+        {canUndo && (
+          <button onClick={onUndo} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs transition-colors">
+            ↩️ Undo
+          </button>
+        )}
+        {tournament.mode === 'queue' && (
+          <button onClick={openArrange} className="px-3 py-1.5 border border-slate-600 hover:border-slate-400 text-slate-400 hover:text-white rounded-lg text-xs transition-colors">
+            🔀
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── League mode ───────────────────────────────────────────────────────────
   if (tournament.mode === 'league') {
     return (
       <div className="space-y-4">
-        {/* Session timer + undo */}
-        <div className="flex items-center justify-between bg-slate-800/40 rounded-xl px-4 py-3">
-          <div>
-            <span className="text-slate-400 text-xs uppercase tracking-wider">Session</span>
-            <div className={cn('font-mono font-bold text-xl', paused ? 'text-slate-400' : 'text-white')}>
-              {formatTime(elapsed)} {paused && <span className="text-xs text-slate-500">paused</span>}
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={handlePause} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs transition-colors">
-              {paused ? '▶ Resume' : '⏸ Pause'}
-            </button>
-            <button onClick={handleResetTimer} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-lg text-xs transition-colors">
-              ↺ Reset
-            </button>
-            {canUndo && (
-              <button onClick={onUndo} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs transition-colors">
-                ↩️ Undo
-              </button>
-            )}
-          </div>
-        </div>
+        <TimerBar />
 
-        {/* Add match form */}
         <div className="bg-slate-800/60 rounded-xl border border-slate-700 p-4">
           <h3 className="text-purple-300 text-xs font-bold uppercase tracking-widest mb-4">📊 Add Match Result</h3>
           <div className="space-y-3">
-            <select value={lHomeId ?? ''} onChange={(e) => setLHomeId(parseInt(e.target.value))} className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 focus:outline-none focus:border-purple-400">
+            <select
+              value={lHomeId ?? ''}
+              onChange={(e) => setLHomeId(parseInt(e.target.value))}
+              className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 focus:outline-none focus:border-purple-400"
+            >
               <option value="">Home team…</option>
               {sortedTeams.map((t) => <option key={t.id} value={t.id}>{t.emoji ? `${t.emoji} ` : ''}{t.name}</option>)}
             </select>
-            <div className="flex gap-3">
-              <input type="number" min="0" value={lHomeScore} onChange={(e) => setLHomeScore(e.target.value)} placeholder="0" className="flex-1 bg-slate-700 border border-slate-600 text-white text-center text-2xl font-bold rounded-lg py-2.5 outline-none focus:border-purple-400" />
-              <div className="flex items-center text-slate-500 font-bold">–</div>
-              <input type="number" min="0" value={lAwayScore} onChange={(e) => setLAwayScore(e.target.value)} placeholder="0" className="flex-1 bg-slate-700 border border-slate-600 text-white text-center text-2xl font-bold rounded-lg py-2.5 outline-none focus:border-purple-400" />
+
+            <div className="flex items-end gap-3">
+              <ScoreInput value={lHomeScore} onChange={setLHomeScore} label="Home" />
+              <div className="text-slate-500 font-black text-2xl pb-3">–</div>
+              <ScoreInput value={lAwayScore} onChange={setLAwayScore} label="Away" />
             </div>
-            <select value={lAwayId ?? ''} onChange={(e) => setLAwayId(parseInt(e.target.value))} className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 focus:outline-none focus:border-purple-400">
+
+            <select
+              value={lAwayId ?? ''}
+              onChange={(e) => setLAwayId(parseInt(e.target.value))}
+              className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 focus:outline-none focus:border-purple-400"
+            >
               <option value="">Away team…</option>
               {sortedTeams.map((t) => <option key={t.id} value={t.id}>{t.emoji ? `${t.emoji} ` : ''}{t.name}</option>)}
             </select>
-            <button onClick={handleLeagueSubmit} disabled={!lHomeId || !lAwayId || lHomeId === lAwayId} className="w-full py-3 bg-green-600 hover:bg-green-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors">
+
+            <button
+              onClick={handleLeagueSubmit}
+              disabled={!lHomeId || !lAwayId || lHomeId === lAwayId}
+              className="w-full py-3 bg-green-600 hover:bg-green-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors"
+            >
               ✅ Add Result
             </button>
           </div>
         </div>
 
-        {/* Recent matches */}
         {tournament.matches.length > 0 && (
           <div className="bg-slate-800/40 rounded-xl border border-slate-700 p-4">
             <h3 className="text-purple-300 text-xs font-bold uppercase tracking-widest mb-3">Recent Matches</h3>
@@ -170,9 +194,9 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
                 const away = tournament.teams.find((t) => t.id === m.awayTeamId);
                 return (
                   <div key={m.id} className="flex items-center justify-between text-sm bg-slate-700/40 rounded-lg px-3 py-2">
-                    <span className="text-white font-medium flex-1 text-right">{home?.emoji}{home?.name}</span>
-                    <span className="text-white font-black mx-3">{m.homeScore}–{m.awayScore}</span>
-                    <span className="text-white font-medium flex-1">{away?.emoji}{away?.name}</span>
+                    <span className="text-white font-medium flex-1 text-right truncate">{home?.emoji}{home?.name}</span>
+                    <span className="text-white font-black mx-3 tabular-nums">{m.homeScore}–{m.awayScore}</span>
+                    <span className="text-white font-medium flex-1 truncate">{away?.emoji}{away?.name}</span>
                   </div>
                 );
               })}
@@ -183,43 +207,19 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
     );
   }
 
-  // ── Queue (Winner Stays On) mode ─────────────────────────────────────────
+  // ── Queue (Winner Stays On) mode ──────────────────────────────────────────
   return (
     <div className="space-y-4">
-      {/* Session timer + undo row */}
-      <div className="flex items-center justify-between bg-slate-800/40 rounded-xl px-4 py-3">
-        <div>
-          <span className="text-slate-400 text-xs uppercase tracking-wider">Session</span>
-          <div className={cn('font-mono font-bold text-xl', paused ? 'text-slate-400' : 'text-white')}>
-            {formatTime(elapsed)} {paused && <span className="text-xs text-slate-500">paused</span>}
-          </div>
-        </div>
-        <div className="flex gap-2 flex-wrap justify-end">
-          <button onClick={handlePause} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs transition-colors">
-            {paused ? '▶ Resume' : '⏸ Pause'}
-          </button>
-          <button onClick={handleResetTimer} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-lg text-xs transition-colors">
-            ↺ Reset
-          </button>
-          {canUndo && (
-            <button onClick={onUndo} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs transition-colors">
-              ↩️ Undo
-            </button>
-          )}
-          <button onClick={openArrange} className="px-3 py-1.5 text-slate-400 hover:text-white border border-slate-600 hover:border-slate-400 rounded-lg text-xs transition-colors">
-            🔀 Arrange
-          </button>
-        </div>
-      </div>
+      <TimerBar />
 
       {/* H2H preview */}
       {h2h && h2h.total > 0 && homeTeam && awayTeam && (
         <div className="bg-indigo-900/30 border border-indigo-700/50 rounded-xl px-4 py-3 text-center">
           <p className="text-indigo-300 text-xs uppercase tracking-wider mb-2">Head to Head</p>
           <div className="flex items-center justify-center gap-3">
-            <div className="text-center flex-1">
+            <div className="flex-1 text-center">
               {homeTeam.emoji && <div className="text-lg">{homeTeam.emoji}</div>}
-              <div className="text-white font-bold text-sm">{homeTeam.name}</div>
+              <div className="text-white font-bold text-sm" style={{ color: homeTeam.color }}>{homeTeam.name}</div>
               <div className="text-green-400 font-black text-2xl">{h2h.w1}</div>
             </div>
             <div className="text-slate-400 text-center">
@@ -227,9 +227,9 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
               <div className="text-white font-bold text-lg">{h2h.draws}</div>
               <div className="text-xs mt-1">{h2h.total} played</div>
             </div>
-            <div className="text-center flex-1">
+            <div className="flex-1 text-center">
               {awayTeam.emoji && <div className="text-lg">{awayTeam.emoji}</div>}
-              <div className="text-white font-bold text-sm">{awayTeam.name}</div>
+              <div className="text-white font-bold text-sm" style={{ color: awayTeam.color }}>{awayTeam.name}</div>
               <div className="text-green-400 font-black text-2xl">{h2h.w2}</div>
             </div>
           </div>
@@ -241,17 +241,16 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
         <div className="bg-slate-800/60 rounded-xl border border-slate-700 p-4">
           <h3 className="text-purple-300 text-xs font-bold uppercase tracking-widest mb-4 text-center">🎮 On Court</h3>
 
-          {/* Player vs player header */}
-          <div className="flex items-center justify-center gap-3 mb-5">
+          <div className="flex items-center justify-center gap-4 mb-5">
             <div className="flex-1 text-center">
-              {homeTeam.emoji && <div className="text-2xl">{homeTeam.emoji}</div>}
-              <div className="text-white font-bold text-sm mt-1" style={{ color: homeTeam.color }}>{homeTeam.name}</div>
+              {homeTeam.emoji && <div className="text-3xl mb-1">{homeTeam.emoji}</div>}
+              <div className="font-bold text-sm" style={{ color: homeTeam.color ?? '#ffffff' }}>{homeTeam.name}</div>
               <div className="text-xs text-purple-300 mt-0.5">P1</div>
             </div>
             <div className="text-slate-500 font-black text-2xl">VS</div>
             <div className="flex-1 text-center">
-              {awayTeam.emoji && <div className="text-2xl">{awayTeam.emoji}</div>}
-              <div className="text-white font-bold text-sm mt-1" style={{ color: awayTeam.color }}>{awayTeam.name}</div>
+              {awayTeam.emoji && <div className="text-3xl mb-1">{awayTeam.emoji}</div>}
+              <div className="font-bold text-sm" style={{ color: awayTeam.color ?? '#ffffff' }}>{awayTeam.name}</div>
               <div className="text-xs text-purple-300 mt-0.5">P2</div>
             </div>
           </div>
@@ -259,39 +258,55 @@ export default function PlayPage({ tournament, canUndo, onUndo, onQueueResult, o
           {/* Quick result buttons */}
           {!scoreMode && (
             <div className="grid grid-cols-3 gap-2 mb-3">
-              <button onClick={() => handleQuickResult(1, 0)} className="py-4 bg-blue-700 hover:bg-blue-600 text-white font-bold rounded-xl transition-colors text-sm flex flex-col items-center gap-1">
-                {homeTeam.emoji ?? '🏆'}
-                <span>P1 Wins</span>
+              <button
+                onClick={() => handleQuickResult(1, 0)}
+                className="py-5 bg-blue-700 hover:bg-blue-600 active:bg-blue-800 text-white font-bold rounded-xl transition-colors flex flex-col items-center gap-1.5"
+              >
+                <span className="text-xl">{homeTeam.emoji ?? '🏆'}</span>
+                <span className="text-xs">P1 Wins</span>
               </button>
-              <button onClick={() => handleQuickResult(0, 0)} className="py-4 bg-slate-600 hover:bg-slate-500 text-white font-bold rounded-xl transition-colors text-sm flex flex-col items-center gap-1">
-                🤝<span>Draw</span>
+              <button
+                onClick={() => handleQuickResult(0, 0)}
+                className="py-5 bg-slate-600 hover:bg-slate-500 active:bg-slate-700 text-white font-bold rounded-xl transition-colors flex flex-col items-center gap-1.5"
+              >
+                <span className="text-xl">🤝</span>
+                <span className="text-xs">Draw</span>
               </button>
-              <button onClick={() => handleQuickResult(0, 1)} className="py-4 bg-orange-700 hover:bg-orange-600 text-white font-bold rounded-xl transition-colors text-sm flex flex-col items-center gap-1">
-                {awayTeam.emoji ?? '🏆'}
-                <span>P2 Wins</span>
+              <button
+                onClick={() => handleQuickResult(0, 1)}
+                className="py-5 bg-orange-700 hover:bg-orange-600 active:bg-orange-800 text-white font-bold rounded-xl transition-colors flex flex-col items-center gap-1.5"
+              >
+                <span className="text-xl">{awayTeam.emoji ?? '🏆'}</span>
+                <span className="text-xs">P2 Wins</span>
               </button>
             </div>
           )}
 
-          {/* Toggle detailed score */}
-          <button onClick={() => setScoreMode((v) => !v)} className="w-full text-xs text-slate-400 hover:text-white transition-colors underline decoration-dotted mb-3">
+          <button
+            onClick={() => setScoreMode((v) => !v)}
+            className="w-full text-xs text-slate-400 hover:text-white transition-colors underline decoration-dotted mb-3"
+          >
             {scoreMode ? '← Back to quick buttons' : '🔢 Enter exact score instead'}
           </button>
 
           {scoreMode && (
             <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <input type="number" min="0" value={homeScore} onChange={(e) => setHomeScore(e.target.value)} placeholder="0" className="flex-1 bg-slate-700 border border-slate-600 text-white text-center text-3xl font-bold rounded-lg py-3 outline-none focus:border-purple-400" />
-                <div className="text-slate-400 font-black text-xl">–</div>
-                <input type="number" min="0" value={awayScore} onChange={(e) => setAwayScore(e.target.value)} placeholder="0" className="flex-1 bg-slate-700 border border-slate-600 text-white text-center text-3xl font-bold rounded-lg py-3 outline-none focus:border-purple-400" />
+              <div className="flex items-end gap-3">
+                <ScoreInput value={homeScore} onChange={setHomeScore} label={homeTeam.name} />
+                <div className="text-slate-400 font-black text-2xl pb-3">–</div>
+                <ScoreInput value={awayScore} onChange={setAwayScore} label={awayTeam.name} />
               </div>
               {error && <p className="text-red-400 text-xs text-center">{error}</p>}
-              <button onClick={handleDetailedResult} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl transition-colors">✅ Submit</button>
+              <button
+                onClick={handleDetailedResult}
+                className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl transition-colors"
+              >
+                ✅ Submit
+              </button>
             </div>
           )}
 
-          {/* Rules reminder */}
-          <div className="grid grid-cols-3 gap-1 text-xs text-slate-400 bg-slate-900/40 rounded-lg p-2 mt-3 text-center">
+          <div className="grid grid-cols-3 gap-1 text-xs text-slate-500 bg-slate-900/40 rounded-lg p-2 mt-3 text-center">
             <div>🏆 Win → stays</div>
             <div>🤝 Draw → both out</div>
             <div>👋 Loss → back</div>

@@ -29,7 +29,41 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('table');
   const [undoSnapshot, setUndoSnapshot] = useState<TournamentData | null>(null);
   const [toast, setToast] = useState('');
-  const sessionStart = useRef(Date.now());
+
+  // ── Session timer — lives here so it survives tab switches ──────────────
+  const accumulatedRef = useRef(0);
+  const lastTickRef = useRef(Date.now());
+  const [timerElapsed, setTimerElapsed] = useState(0);
+  const [timerPaused, setTimerPaused] = useState(false);
+
+  useEffect(() => {
+    if (timerPaused) return;
+    const iv = setInterval(() => {
+      const now = Date.now();
+      accumulatedRef.current += now - lastTickRef.current;
+      lastTickRef.current = now;
+      setTimerElapsed(Math.floor(accumulatedRef.current / 1000));
+    }, 1000);
+    lastTickRef.current = Date.now();
+    return () => clearInterval(iv);
+  }, [timerPaused]);
+
+  const handlePauseTimer = () => {
+    if (!timerPaused) {
+      accumulatedRef.current += Date.now() - lastTickRef.current;
+      setTimerElapsed(Math.floor(accumulatedRef.current / 1000));
+    } else {
+      lastTickRef.current = Date.now();
+    }
+    setTimerPaused((p) => !p);
+  };
+
+  const handleResetTimer = () => {
+    accumulatedRef.current = 0;
+    lastTickRef.current = Date.now();
+    setTimerElapsed(0);
+    setTimerPaused(false);
+  };
 
   const activeTournament = useMemo(
     () => collection.tournaments.find((t) => t.id === collection.currentId) ?? collection.tournaments[0],
@@ -161,7 +195,10 @@ export default function App() {
               onQueueResult={onQueueResult}
               onAddMatch={onAddMatch}
               onArrangeQueue={onArrangeQueue}
-              sessionStart={sessionStart.current}
+              timerElapsed={timerElapsed}
+              timerPaused={timerPaused}
+              onPauseTimer={handlePauseTimer}
+              onResetTimer={handleResetTimer}
             />
           )}
           {activeTab === 'table' && <StandingsPage tournament={activeTournament} />}

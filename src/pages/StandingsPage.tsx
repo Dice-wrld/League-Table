@@ -137,10 +137,17 @@ export default function StandingsPage({ tournament }: StandingsPageProps) {
                   <div className="text-white font-black text-2xl">{team.points}</div>
                 </div>
                 <div className="grid grid-cols-6 gap-1 text-center text-xs mb-3">
-                  {[['PL', team.played], ['W', team.won], ['D', team.drawn], ['L', team.lost], ['GF', team.goalsFor], ['GA', team.goalsAgainst]].map(([label, val]) => (
-                    <div key={label as string} className="bg-slate-700/50 rounded p-1.5">
+                  {([
+                    ['W',  team.won,                                                          'text-green-400'],
+                    ['D',  team.drawn,                                                        'text-slate-300'],
+                    ['L',  team.lost,                                                         'text-red-400'  ],
+                    ['GF', team.goalsFor,                                                     'text-slate-300'],
+                    ['GA', team.goalsAgainst,                                                 'text-slate-300'],
+                    ['GD', (team.goalDifference > 0 ? '+' : '') + team.goalDifference,       team.goalDifference > 0 ? 'text-green-400' : team.goalDifference < 0 ? 'text-red-400' : 'text-slate-300'],
+                  ] as [string, string | number, string][]).map(([label, val, colour]) => (
+                    <div key={label} className="bg-slate-700/50 rounded p-1.5">
                       <div className="text-slate-400 text-xs">{label}</div>
-                      <div className="text-white font-bold">{val}</div>
+                      <div className={cn('font-bold text-xs', colour)}>{val}</div>
                     </div>
                   ))}
                 </div>
